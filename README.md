@@ -8,11 +8,18 @@
 
 ### 网页
 
-打开 <https://wechat-download.coderfather.com>，贴入文章链接和 Token，下载 zip。
+打开 <https://wechat-download.coderfather.com>，贴入文章链接即自动解析预览（标题/公众号/作者/发布时间/图片数），点「下载 zip」或回车直接下载。也支持带参直达：`/?url=<文章链接>` 自动解析并下载。Token 由服务端注入页面，无需手填。
 
 ### API
 
 ```bash
+# 元数据预览（不下载图片，秒回）
+curl -X POST https://wechat-download.coderfather.com/api/parse \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://mp.weixin.qq.com/s/xxxx"}'
+
+# 转 Markdown + 图片 zip
 curl -X POST https://wechat-download.coderfather.com/api/convert \
   -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
@@ -44,7 +51,7 @@ npm run deploy
 
 ```
 src/
-├── index.ts    # 路由：落地页 / POST /api/convert（Bearer Token）/ fetch-test
+├── index.ts    # 路由：落地页（Token 注入）/ POST /api/parse / POST /api/convert / fetch-test
 ├── convert.ts  # 编排：抓取 → 提取 → 图片 → Markdown → zip(fflate)
 ├── extract.ts  # HTMLRewriter 流式解析：元数据 + #js_content 轻量树（无 DOM 依赖）
 ├── markdown.ts # 树 → Markdown 渲染器（块/行内/列表/表格/引用/代码块）

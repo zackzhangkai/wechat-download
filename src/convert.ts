@@ -34,6 +34,35 @@ export function normalizeUrl(raw: string): string {
   return parsed.toString();
 }
 
+export interface ParseResult {
+  title: string;
+  account: string;
+  author: string;
+  published: string;
+  description: string;
+  images: number;
+}
+
+/** 仅抓取并解析元数据（不下载图片），用于页面预览。 */
+export async function parseArticleMeta(rawUrl: string): Promise<ParseResult> {
+  const url = normalizeUrl(rawUrl);
+  const resp = await fetch(url, {
+    headers: { "User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9" },
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) throw new Error(`文章抓取失败：HTTP ${resp.status}`);
+  const article = await extractArticle(url, await resp.text());
+  return {
+    title: article.title,
+    account: article.account,
+    author: article.author,
+    published: article.published,
+    description: article.description,
+    images: collectImageUrls(article.body).length,
+  };
+}
+
 export async function convertArticle(rawUrl: string): Promise<ConvertResult> {
   const url = normalizeUrl(rawUrl);
   const resp = await fetch(url, {

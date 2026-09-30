@@ -1,11 +1,12 @@
 /**
  * 路由入口。
- * - GET  /             落地页
+ * - GET  /             落地页（Token 由服务端注入，无需手填）
+ * - POST /api/parse    Bearer Token 门 → 文章元数据（预览）
  * - POST /api/convert  Bearer Token 门 → 文章 zip
  * - GET  /fetch-test   诊断端点（host 白名单，仅元数据）
  */
 
-import { convertArticle } from "./convert";
+import { convertArticle, parseArticleMeta } from "./convert";
 import { LANDING_HTML } from "./page";
 
 export interface Env {
@@ -24,7 +25,8 @@ function json(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload, null, 2), { status, headers: JSON_HEADERS });
 }
 
-async function handleConvert(request: Request, env: Env): Promise<Response> {
+/** 统一鉴权：通过返回 null，否则返回对应错误响应。 */
+function checkAuth(request: Request, env: Env): Response | null {
   if (!env.API_TOKEN) {
     return json({ error: "未配置 API_TOKEN，请先 wrangler secret put API_TOKEN" }, 503);
   }
@@ -32,12 +34,40 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
   if (auth !== `Bearer ${env.API_TOKEN}`) {
     return json({ error: "Token 无效" }, 401);
   }
+  return null;
+}
+
+async function readUrlBody(request: Request): Promise<string> {
+  const body = (await request.json()) as { url?: unknown };
+  if (typeof body.url !== "string" || !body.url.trim()) throw new Error("缺少 url");
+  return body.url;
+}
+
+async function handleParse(request: Request, env: Env): Promise<Response> {
+  const denied = checkAuth(request, env);
+  if (denied) return denied;
 
   let url: string;
   try {
-    const body = (await request.json()) as { url?: unknown };
-    if (typeof body.url !== "string" || !body.url.trim()) throw new Error("缺少 url");
-    url = body.url;
+    url = await readUrlBody(request);
+  } catch {
+    return json({ error: '请求体应为 JSON：{ "url": "https://mp.weixin.qq.com/s/..." }' }, 400);
+  }
+
+  try {
+    return json(await parseArticleMeta(url));
+  } catch (err) {
+    return json({ error: err instanceof Error ? err.message : String(err) }, 422);
+  }
+}
+
+async function handleConvert(request: Request, env: Env): Promise<Response> {
+  const denied = checkAuth(request, env);
+  if (denied) return denied;
+
+  let url: string;
+  try {
+    url = await readUrlBody(request);
   } catch {
     return json({ error: '请求体应为 JSON：{ "url": "https://mp.weixin.qq.com/s/..." }' }, 400);
   }
@@ -107,11 +137,20 @@ async function handleFetchTest(url: URL): Promise<Response> {
   });
 }
 
+/** 落地页：把 API_TOKEN 注入页面脚本（页面本身即持有者可见的配置界面）。 */
+function landingPage(env: Env): Response {
+  const html = LANDING_HTML.replace("/*__TOKEN__*/null", JSON.stringify(env.API_TOKEN ?? null));
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/") {
-      return new Response(LANDING_HTML, { headers: { "content-type": "text/html; charset=utf-8" } });
+      return landingPage(env);
+    }
+    if (request.method === "POST" && url.pathname === "/api/parse") {
+      return handleParse(request, env);
     }
     if (request.method === "POST" && url.pathname === "/api/convert") {
       return handleConvert(request, env);
