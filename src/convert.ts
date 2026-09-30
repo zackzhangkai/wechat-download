@@ -4,7 +4,7 @@
  */
 
 import { zipSync, strToU8 } from "fflate";
-import { extractArticle } from "./extract";
+import { extractArticle, Article } from "./extract";
 import { bodyToMarkdown, markdownNote, safeFilename } from "./markdown";
 import { collectImageUrls, downloadImages } from "./images";
 
@@ -12,6 +12,35 @@ import { collectImageUrls, downloadImages } from "./images";
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+async function fetchPage(url: string): Promise<string> {
+  const resp = await fetch(url, {
+    headers: { "User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9" },
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!resp.ok) throw new Error(`文章抓取失败：HTTP ${resp.status}`);
+  return resp.text();
+}
+
+/**
+ * 抓取 + 提取。微信对数据中心 IP 偶发返回无标题/无正文的风控变体页（瞬态），
+ * 间隔重试通常即恢复正常变体；网络类错误不重试，直接抛出。
+ */
+async function fetchAndExtract(url: string): Promise<Article> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+    try {
+      return await extractArticle(url, await fetchPage(url));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/未找到/.test(message)) throw err;
+      lastError = err instanceof Error ? err : new Error(message);
+    }
+  }
+  throw new Error(`${lastError?.message}（已自动重试 3 次，微信可能对本次请求触发风控，请稍后再试）`);
+}
 
 export interface ConvertResult {
   filename: string;
@@ -46,13 +75,7 @@ export interface ParseResult {
 /** 仅抓取并解析元数据（不下载图片），用于页面预览。 */
 export async function parseArticleMeta(rawUrl: string): Promise<ParseResult> {
   const url = normalizeUrl(rawUrl);
-  const resp = await fetch(url, {
-    headers: { "User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9" },
-    redirect: "follow",
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!resp.ok) throw new Error(`文章抓取失败：HTTP ${resp.status}`);
-  const article = await extractArticle(url, await resp.text());
+  const article = await fetchAndExtract(url);
   return {
     title: article.title,
     account: article.account,
@@ -65,15 +88,7 @@ export async function parseArticleMeta(rawUrl: string): Promise<ParseResult> {
 
 export async function convertArticle(rawUrl: string): Promise<ConvertResult> {
   const url = normalizeUrl(rawUrl);
-  const resp = await fetch(url, {
-    headers: { "User-Agent": UA, "Accept-Language": "zh-CN,zh;q=0.9" },
-    redirect: "follow",
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!resp.ok) throw new Error(`文章抓取失败：HTTP ${resp.status}`);
-  const page = await resp.text();
-
-  const article = await extractArticle(url, page);
+  const article = await fetchAndExtract(url);
   const urls = collectImageUrls(article.body);
   const { entries, map, failed } = await downloadImages(urls);
 
