@@ -1,0 +1,7 @@
+name = "wechat-download"
+main = "src/index.ts"
+compatibility_date = "2026-01-15"
+
+routes = [
+  { pattern = "wechat-download.coderfather.com", custom_domain = true }
+]
