@@ -2,7 +2,7 @@
  * 路由入口。
  * - GET  /             落地页（Token 由服务端注入，无需手填）
  * - POST /api/parse    Bearer Token 门 → 文章元数据（预览）
- * - POST /api/convert  Bearer Token 门 → 文章 zip
+ * - POST /api/convert  Bearer Token 门 → 文章 zip（body 可带 withLinks:true 附 links.json）
  * - GET  /fetch-test   诊断端点（host 白名单，仅元数据）
  */
 
@@ -37,10 +37,15 @@ function checkAuth(request: Request, env: Env): Response | null {
   return null;
 }
 
-async function readUrlBody(request: Request): Promise<string> {
-  const body = (await request.json()) as { url?: unknown };
+interface UrlBody {
+  url: string;
+  withLinks: boolean;
+}
+
+async function readUrlBody(request: Request): Promise<UrlBody> {
+  const body = (await request.json()) as { url?: unknown; withLinks?: unknown };
   if (typeof body.url !== "string" || !body.url.trim()) throw new Error("缺少 url");
-  return body.url;
+  return { url: body.url, withLinks: body.withLinks === true };
 }
 
 async function handleParse(request: Request, env: Env): Promise<Response> {
@@ -49,7 +54,7 @@ async function handleParse(request: Request, env: Env): Promise<Response> {
 
   let url: string;
   try {
-    url = await readUrlBody(request);
+    ({ url } = await readUrlBody(request));
   } catch {
     return json({ error: '请求体应为 JSON：{ "url": "https://mp.weixin.qq.com/s/..." }' }, 400);
   }
@@ -66,14 +71,15 @@ async function handleConvert(request: Request, env: Env): Promise<Response> {
   if (denied) return denied;
 
   let url: string;
+  let withLinks: boolean;
   try {
-    url = await readUrlBody(request);
+    ({ url, withLinks } = await readUrlBody(request));
   } catch {
-    return json({ error: '请求体应为 JSON：{ "url": "https://mp.weixin.qq.com/s/..." }' }, 400);
+    return json({ error: '请求体应为 JSON：{ "url": "https://mp.weixin.qq.com/s/...", "withLinks": true }' }, 400);
   }
 
   try {
-    const result = await convertArticle(url);
+    const result = await convertArticle(url, { withLinks });
     const meta = {
       title: result.title,
       account: result.account,

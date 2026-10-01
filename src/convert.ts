@@ -7,6 +7,7 @@ import { zipSync, strToU8 } from "fflate";
 import { extractArticle, Article } from "./extract";
 import { bodyToMarkdown, markdownNote, safeFilename } from "./markdown";
 import { collectImageUrls, downloadImages } from "./images";
+import { collectArticleLinks } from "./links";
 
 /** 与本地 skill (save_wechat_article.py) 完全一致的 UA：拿到相同页面变体，图片 URL/哈希与本地管线互通。 */
 const UA =
@@ -51,6 +52,13 @@ export interface ConvertResult {
   published: string;
   images: number;
   failedImages: number;
+  /** 正文内链（canonical），仅 withLinks 时收集。 */
+  links: string[];
+}
+
+export interface ConvertOptions {
+  /** 整号抓取模式：zip 内附带 links.json（正文内链），供页面 BFS 发现下一批。 */
+  withLinks?: boolean;
 }
 
 export function normalizeUrl(raw: string): string {
@@ -86,7 +94,7 @@ export async function parseArticleMeta(rawUrl: string): Promise<ParseResult> {
   };
 }
 
-export async function convertArticle(rawUrl: string): Promise<ConvertResult> {
+export async function convertArticle(rawUrl: string, opts: ConvertOptions = {}): Promise<ConvertResult> {
   const url = normalizeUrl(rawUrl);
   const article = await fetchAndExtract(url);
   const urls = collectImageUrls(article.body);
@@ -94,9 +102,13 @@ export async function convertArticle(rawUrl: string): Promise<ConvertResult> {
 
   const body = bodyToMarkdown(article.body, map);
   const note = markdownNote(article, body);
+  const links = opts.withLinks ? collectArticleLinks(article.body) : [];
 
   const files: Record<string, Uint8Array> = { "note.md": strToU8(note) };
   for (const entry of entries) files[entry.name] = entry.data;
+  if (opts.withLinks) {
+    files["links.json"] = strToU8(JSON.stringify({ url, account: article.account, links }, null, 2));
+  }
   const zip = zipSync(files, { level: 0 }); // 图片已压缩，仅存档
 
   return {
@@ -108,5 +120,6 @@ export async function convertArticle(rawUrl: string): Promise<ConvertResult> {
     published: article.published,
     images: urls.length,
     failedImages: failed,
+    links,
   };
 }
